@@ -451,6 +451,9 @@ export default function Page() {
                       Bắt đầu xử lý
                     </button>
                   </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Mỗi lần xử lý AI sẽ áp dụng một phong cách màu ngẫu nhiên, vì vậy bạn có thể thử nhiều lần để tìm bản phối ưng ý nhất.
+                  </p>
                 </div>
               )}
             </div>

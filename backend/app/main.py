@@ -46,6 +46,36 @@ def enhance_quality(image: np.ndarray) -> np.ndarray:
     sharpened = cv.addWeighted(enhanced, 1.4, blurred, -0.4, 0)
     return sharpened
 
+def apply_color_variation(image: np.ndarray) -> np.ndarray:
+    """Inject subtle randomness so identical inputs can receive different styles."""
+    rng = np.random.default_rng()
+
+    lab = cv.cvtColor(image, cv.COLOR_BGR2LAB).astype(np.float32)
+    l, a, b = cv.split(lab)
+
+    lightness_gain = rng.uniform(0.96, 1.06)
+    lightness_shift = rng.uniform(-6, 6)
+    l = np.clip(l * lightness_gain + lightness_shift, 0, 255)
+
+    centered_a = a - 128.0
+    centered_b = b - 128.0
+    saturation_scale = rng.uniform(0.88, 1.25)
+    hue_rotation = rng.normal(0.0, 9.0)
+    hue_balance = rng.normal(0.0, 9.0)
+
+    centered_a = np.clip(centered_a * saturation_scale + hue_rotation, -128, 127)
+    centered_b = np.clip(centered_b * saturation_scale + hue_balance, -128, 127)
+
+    varied_lab = cv.merge((l, centered_a + 128.0, centered_b + 128.0))
+    varied_bgr = cv.cvtColor(varied_lab.astype(np.uint8), cv.COLOR_LAB2BGR)
+
+    hsv = cv.cvtColor(varied_bgr, cv.COLOR_BGR2HSV).astype(np.float32)
+    hsv[..., 0] = (hsv[..., 0] + rng.uniform(-10, 10)) % 180.0
+    hsv[..., 1] = np.clip(hsv[..., 1] * rng.uniform(0.9, 1.2), 0, 255)
+    hsv[..., 2] = np.clip(hsv[..., 2] * rng.uniform(0.92, 1.08) + rng.uniform(-12, 12), 0, 255)
+
+    return cv.cvtColor(hsv.astype(np.uint8), cv.COLOR_HSV2BGR)
+
 def clamp_dimension(dim: Optional[int]) -> Optional[int]:
     if dim is None:
         return None
@@ -103,6 +133,7 @@ async def colorize(
         bgr = cv.resize(bgr, (int(w*ratio), int(h*ratio)))
 
     out = colorize_bgr(bgr)
+    out = apply_color_variation(out)
     if high_quality:
         out = enhance_quality(out)
 
