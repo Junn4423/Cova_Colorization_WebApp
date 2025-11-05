@@ -9,39 +9,175 @@ export default function Page() {
   const [err, setErr] = useState<string>();
   const [progress, setProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [highQuality, setHighQuality] = useState(false);
+  const [resizeEnabled, setResizeEnabled] = useState(false);
+  const [resizeWidth, setResizeWidth] = useState<string>('');
+  const [resizeHeight, setResizeHeight] = useState<string>('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressActiveRef = useRef(false);
+  const simulatedProgressRef = useRef(0);
+  const lastMessageRef = useRef('');
 
   const modelUrl = process.env.NEXT_PUBLIC_MODEL_URL || 'http://localhost:8000';
 
-  const loadingStages = [
-    { progress: 0, message: 'Phân tích cấu trúc ảnh...', duration: 2000 },
-    { progress: 10, message: 'Khởi động mạng neural network...', duration: 2500 },
-    { progress: 20, message: 'Xác định các vùng cần tô màu...', duration: 2000 },
-    { progress: 30, message: 'Phân tích độ sáng và bóng tối...', duration: 2500 },
-    { progress: 45, message: 'Dự đoán bảng màu phù hợp...', duration: 2000 },
-    { progress: 60, message: 'Áp dụng thuật toán tô màu AI...', duration: 2500 },
-    { progress: 75, message: 'Tinh chỉnh độ tương phản...', duration: 2000 },
-    { progress: 90, message: 'Hoàn thiện và tối ưu hóa...', duration: 2000 },
-    { progress: 100, message: 'Hoàn tất!', duration: 1000 },
+  const loadingMessages = [
+    'Phân tích cấu trúc ảnh...',
+    'Khởi động mạng neural network...',
+    'Xác định các vùng cần tô màu...',
+    'Phân tích độ sáng và bóng tối...',
+    'Dự đoán bảng màu phù hợp...',
+    'Áp dụng thuật toán tô màu AI...',
+    'Tinh chỉnh độ tương phản...',
+    'Hoàn thiện và tối ưu hóa...',
+    'Tăng cường độ chính xác màu sắc...',
+    'Đồng bộ hóa ánh sáng và màu sắc...',
   ];
 
-  async function onFileChange(f: File) {
+  const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+  function stopProgressSimulation(options?: { forceComplete?: boolean; message?: string }) {
+    if (progressTimerRef.current) {
+      clearTimeout(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+    progressActiveRef.current = false;
+    if (options?.forceComplete) {
+      simulatedProgressRef.current = 100;
+      setProgress(100);
+      setLoadingMessage(options.message ?? 'Hoàn tất!');
+    } else if (options?.message) {
+      setLoadingMessage(options.message);
+    }
+  }
+
+  function startProgressSimulation() {
+    stopProgressSimulation();
+    progressActiveRef.current = true;
+    simulatedProgressRef.current = 0;
+    lastMessageRef.current = '';
+
+    const runStage = () => {
+      const maxVisibleProgress = 95;
+      const increment = randomInt(4, 12);
+      const nextProgress = Math.min(maxVisibleProgress, simulatedProgressRef.current + increment);
+      simulatedProgressRef.current = nextProgress;
+      setProgress(nextProgress);
+
+      if (loadingMessages.length > 0) {
+        let message = loadingMessages[randomInt(0, loadingMessages.length - 1)];
+        if (loadingMessages.length > 1) {
+          let guard = 0;
+          while (message === lastMessageRef.current && guard < 5) {
+            message = loadingMessages[randomInt(0, loadingMessages.length - 1)];
+            guard += 1;
+          }
+        }
+        lastMessageRef.current = message;
+        setLoadingMessage(message);
+      }
+
+      const delay = randomInt(900, 2600);
+      if (!progressActiveRef.current) {
+        return;
+      }
+      progressTimerRef.current = setTimeout(runStage, delay);
+    };
+
+    runStage();
+  }
+
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) {
+        clearTimeout(progressTimerRef.current);
+      }
+      progressActiveRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (src) {
+        URL.revokeObjectURL(src);
+      }
+    };
+  }, [src]);
+
+  useEffect(() => {
+    return () => {
+      if (out) {
+        URL.revokeObjectURL(out);
+      }
+    };
+  }, [out]);
+
+  function handleFileSelected(file: File) {
     setErr(undefined);
+    if (out) {
+      URL.revokeObjectURL(out);
+    }
     setOut(undefined);
     setProgress(0);
     setLoadingMessage('');
-    const url = URL.createObjectURL(f);
+    setBusy(false);
+
+    if (progressTimerRef.current) {
+      clearTimeout(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+
+    progressActiveRef.current = false;
+
+    if (src) {
+      URL.revokeObjectURL(src);
+    }
+
+    const url = URL.createObjectURL(file);
     setSrc(url);
-    const fd = new FormData();
-    fd.append('file', f);
+    setSelectedFile(file);
+
+    if (fileRef.current) {
+      fileRef.current.value = '';
+    }
+  }
+
+  async function startProcessing() {
+    if (!selectedFile || busy) {
+      return;
+    }
+
+    setErr(undefined);
+    if (out) {
+      URL.revokeObjectURL(out);
+    }
+    setOut(undefined);
+    setProgress(0);
+    setLoadingMessage('');
     setBusy(true);
 
-    const MINIMUM_WAIT_TIME = 20000; // 20 seconds minimum
+    const fd = new FormData();
+    fd.append('file', selectedFile);
+    fd.append('high_quality', String(highQuality));
+
+    if (resizeEnabled) {
+      const widthValue = parseInt(resizeWidth, 10);
+      if (!Number.isNaN(widthValue) && widthValue > 0) {
+        fd.append('output_width', Math.min(widthValue, 4096).toString());
+      }
+
+      const heightValue = parseInt(resizeHeight, 10);
+      if (!Number.isNaN(heightValue) && heightValue > 0) {
+        fd.append('output_height', Math.min(heightValue, 4096).toString());
+      }
+    }
+
+    const MINIMUM_WAIT_TIME = randomInt(9000, 20000);
     const startTime = Date.now();
     let resultBlob: Blob | null = null;
     let fetchError: any = null;
 
-    // Start the actual API call (runs in background)
     const apiCall = fetch(modelUrl + '/colorize', { method: 'POST', body: fd })
       .then(async (r) => {
         if (!r.ok) {
@@ -56,50 +192,36 @@ export default function Page() {
       .catch((e) => {
         fetchError = e;
       });
-    
-    // Simulate realistic progress with messages
-    let currentStageIndex = 0;
-    const progressInterval = setInterval(() => {
-      if (currentStageIndex < loadingStages.length) {
-        const stage = loadingStages[currentStageIndex];
-        setProgress(stage.progress);
-        setLoadingMessage(stage.message);
-        currentStageIndex++;
-      }
-    }, 2200); // Each stage takes ~2.2 seconds
+
+    startProgressSimulation();
 
     try {
-      // Wait for API call to complete
       await apiCall;
 
-      // Check if we have an error
       if (fetchError) {
         throw fetchError;
       }
 
-      // Calculate remaining time to reach minimum wait
       const elapsedTime = Date.now() - startTime;
       const remainingTime = Math.max(0, MINIMUM_WAIT_TIME - elapsedTime);
 
-      // Wait for remaining time if needed
       if (remainingTime > 0) {
-        await new Promise(resolve => setTimeout(resolve, remainingTime));
+        await new Promise((resolve) => setTimeout(resolve, remainingTime));
       }
 
-      // Ensure we're at 100% and show completion message
-      clearInterval(progressInterval);
-      setProgress(100);
-      setLoadingMessage('Hoàn tất!');
-      await new Promise(resolve => setTimeout(resolve, 500));
+      stopProgressSimulation({ forceComplete: true, message: 'Hoàn tất!' });
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Show the result
       if (resultBlob) {
         setOut(URL.createObjectURL(resultBlob));
       }
     } catch (e: any) {
+      stopProgressSimulation({ message: 'Có lỗi xảy ra' });
       setErr(e?.message || 'Có lỗi xảy ra');
-      clearInterval(progressInterval);
     } finally {
+      if (progressActiveRef.current) {
+        stopProgressSimulation();
+      }
       setTimeout(() => {
         setBusy(false);
         setProgress(0);
@@ -109,11 +231,40 @@ export default function Page() {
   }
 
   function resetAll() {
+    if (progressTimerRef.current) {
+      clearTimeout(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+    progressActiveRef.current = false;
+    simulatedProgressRef.current = 0;
+    lastMessageRef.current = '';
+
+    if (src) {
+      URL.revokeObjectURL(src);
+    }
+
+    if (out) {
+      URL.revokeObjectURL(out);
+    }
+
+    simulatedProgressRef.current = 0;
+    lastMessageRef.current = '';
+
     setSrc(undefined);
     setOut(undefined);
     setErr(undefined);
     setProgress(0);
-    if (fileRef.current) fileRef.current.value = '';
+    setLoadingMessage('');
+    setBusy(false);
+    setSelectedFile(null);
+    setHighQuality(false);
+    setResizeEnabled(false);
+    setResizeWidth('');
+    setResizeHeight('');
+
+    if (fileRef.current) {
+      fileRef.current.value = '';
+    }
   }
 
   return (
@@ -163,21 +314,24 @@ export default function Page() {
         {/* Upload Section */}
         <div className="mb-8">
           <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
-            <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center w-full">
               <input
                 ref={fileRef}
                 type="file"
                 accept="image/*"
+                disabled={busy}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) onFileChange(f);
+                  if (f) {
+                    handleFileSelected(f);
+                  }
                 }}
                 className="hidden"
                 id="file-upload"
               />
               <label
                 htmlFor="file-upload"
-                className="cursor-pointer group"
+                className={`cursor-pointer group ${busy ? 'pointer-events-none opacity-70' : ''}`}
               >
                 <div className="flex flex-col items-center p-12 border-2 border-dashed border-gray-300 rounded-xl hover:border-indigo-500 transition-all duration-200 group-hover:bg-indigo-50/50">
                   <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200 shadow-lg">
@@ -200,13 +354,104 @@ export default function Page() {
               {src && (
                 <button
                   onClick={resetAll}
-                  className="mt-4 px-6 py-2.5 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors duration-200 flex items-center gap-2"
+                  disabled={busy}
+                  className={`mt-4 px-6 py-2.5 text-sm font-medium text-red-600 bg-red-50 rounded-lg transition-colors duration-200 flex items-center gap-2 ${busy ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-100'}`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
                   Xóa và chọn ảnh khác
                 </button>
+              )}
+
+              {selectedFile && (
+                <div className="w-full mt-6 space-y-6">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="p-5 bg-indigo-50/60 border border-indigo-200 rounded-xl">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-indigo-900">Chế độ nâng cao</p>
+                          <p className="text-xs text-indigo-600/80 mt-1">Tăng chi tiết, độ nét và độ sâu màu.</p>
+                        </div>
+                        <label className="relative inline-flex h-6 w-11 cursor-pointer items-center">
+                          <input
+                            type="checkbox"
+                            className="peer sr-only"
+                            checked={highQuality}
+                            onChange={(e) => setHighQuality(e.target.checked)}
+                          />
+                          <span className="block h-6 w-11 rounded-full bg-gray-300 transition-colors duration-200 peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-purple-600"></span>
+                          <span className="absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-5"></span>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="p-5 bg-white border border-gray-200 rounded-xl">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">Thay đổi kích thước</p>
+                          <p className="text-xs text-gray-500 mt-1">Thiết lập kích thước mong muốn cho ảnh xuất ra.</p>
+                        </div>
+                        <label className="relative inline-flex h-6 w-11 cursor-pointer items-center">
+                          <input
+                            type="checkbox"
+                            className="peer sr-only"
+                            checked={resizeEnabled}
+                            onChange={(e) => setResizeEnabled(e.target.checked)}
+                          />
+                          <span className="block h-6 w-11 rounded-full bg-gray-300 transition-colors duration-200 peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-purple-600"></span>
+                          <span className="absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-5"></span>
+                        </label>
+                      </div>
+                      {resizeEnabled && (
+                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="flex flex-col">
+                            <label className="text-xs font-medium text-gray-600 mb-1">Chiều rộng (px)</label>
+                            <input
+                              type="number"
+                              min={64}
+                              max={4096}
+                              inputMode="numeric"
+                              value={resizeWidth}
+                              onChange={(e) => setResizeWidth(e.target.value)}
+                              placeholder="VD: 1920"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
+                            />
+                          </div>
+                          <div className="flex flex-col">
+                            <label className="text-xs font-medium text-gray-600 mb-1">Chiều cao (px)</label>
+                            <input
+                              type="number"
+                              min={64}
+                              max={4096}
+                              inputMode="numeric"
+                              value={resizeHeight}
+                              onChange={(e) => setResizeHeight(e.target.value)}
+                              placeholder="VD: 1080"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 sm:col-span-2">Bỏ trống một trong hai giá trị để giữ nguyên tỷ lệ gốc.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <p className="text-sm text-gray-600">
+                      Xem trước ảnh của bạn ở bên dưới, cấu hình tùy chọn rồi nhấn bắt đầu để hệ thống làm việc.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={startProcessing}
+                      disabled={!selectedFile || busy}
+                      className={`inline-flex items-center justify-center px-6 py-2.5 text-sm font-semibold rounded-lg text-white shadow-md transition-all duration-200 ${(!selectedFile || busy)
+                        ? 'bg-indigo-300 cursor-not-allowed'
+                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 hover:-translate-y-0.5'
+                      }`}
+                    >
+                      Bắt đầu xử lý
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
